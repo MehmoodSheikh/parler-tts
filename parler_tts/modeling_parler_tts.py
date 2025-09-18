@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ PyTorch ParlerTTS model."""
-import copy
-import inspect
 import math
 import random
+import copy
+import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, List
-
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
+
 from transformers import AutoConfig, AutoModel, AutoModelForTextEncoding
 from transformers.activations import ACT2FN
 from transformers.cache_utils import (
@@ -62,6 +62,32 @@ from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .dac_wrapper import DACConfig, DACModel
 from .logits_processors import ParlerTTSLogitsProcessor
 
+# Add missing imports
+from importlib.metadata import version
+from packaging.version import Version
+
+logger = logging.get_logger(__name__)
+
+# Version compatibility check
+is_dac_integrated_to_transformers = Version(version("transformers")) > Version("4.44.2dev")
+
+# Register DAC configuration
+if not is_dac_integrated_to_transformers:
+    AutoConfig.register("dac", DACConfig)
+else:
+    AutoConfig.register("dac_on_the_hub", DACConfig)
+
+AutoModel.register(DACConfig, DACModel)
+
+# Flash attention setup
+if is_flash_attn_2_available():
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
+    from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
+else:
+    flash_attn_func = None
+    logger.warning_once("Flash attention 2 is not available")
+
+# Compatibility wrapper for model loading
 def safe_from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
     """Safely load pretrained models with enhanced error handling"""
     try:
@@ -71,7 +97,7 @@ def safe_from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
             logger.warning(f"Model registration issue detected: {e}")
             logger.info("Attempting to re-register ParlerTTS models...")
             
-            # Re-register models - fix the import
+            # Re-register models
             import parler_tts
             parler_tts.register_parler_tts_models()
             
@@ -79,19 +105,6 @@ def safe_from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
             return cls._original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         else:
             raise e
-
-# Apply the wrapper at the end of the file after classes are defined
-def _apply_safe_loading():
-    """Apply safe loading wrappers to model classes"""
-    if 'ParlerTTSForConditionalGeneration' in globals():
-        if not hasattr(ParlerTTSForConditionalGeneration, '_original_from_pretrained'):
-            ParlerTTSForConditionalGeneration._original_from_pretrained = ParlerTTSForConditionalGeneration.from_pretrained
-            ParlerTTSForConditionalGeneration.from_pretrained = classmethod(safe_from_pretrained)
-
-    if 'ParlerTTSForCausalLM' in globals():
-        if not hasattr(ParlerTTSForCausalLM, '_original_from_pretrained'):
-            ParlerTTSForCausalLM._original_from_pretrained = ParlerTTSForCausalLM.from_pretrained  
-            ParlerTTSForCausalLM.from_pretrained = classmethod(safe_from_pretrained)
 
 
 is_dac_integrated_to_transformers = Version(version("transformers")) > Version("4.44.2dev")
@@ -3705,5 +3718,18 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         model_kwargs["cache_position"] = cache_position
         return model_kwargs
+    
+def _apply_safe_loading():
+    """Apply safe loading wrappers to model classes"""
+    if 'ParlerTTSForConditionalGeneration' in globals():
+        if not hasattr(ParlerTTSForConditionalGeneration, '_original_from_pretrained'):
+            ParlerTTSForConditionalGeneration._original_from_pretrained = ParlerTTSForConditionalGeneration.from_pretrained
+            ParlerTTSForConditionalGeneration.from_pretrained = classmethod(safe_from_pretrained)
 
+    if 'ParlerTTSForCausalLM' in globals():
+        if not hasattr(ParlerTTSForCausalLM, '_original_from_pretrained'):
+            ParlerTTSForCausalLM._original_from_pretrained = ParlerTTSForCausalLM.from_pretrained  
+            ParlerTTSForCausalLM.from_pretrained = classmethod(safe_from_pretrained)
+
+# Call at the end
 _apply_safe_loading()
