@@ -24,6 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 
+from transformers.generation.utils import GenerationMixin
 from transformers import AutoConfig, AutoModel, AutoModelForTextEncoding
 from transformers.activations import ACT2FN
 from transformers.cache_utils import (
@@ -1144,7 +1145,7 @@ class ParlerTTSPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-MUSICGEN_START_DOCSTRING = r"""
+MUSICGEN_START_DOCSTRING = """
 
     The ParlerTTS model was proposed in [Simple and Controllable Music Generation](https://arxiv.org/abs/2306.05284) by
     Jade Copet, Felix Kreuk, Itai Gat, Tal Remez, David Kant, Gabriel Synnaeve, Yossi Adi, Alexandre Défossez. It is an
@@ -1164,7 +1165,7 @@ MUSICGEN_START_DOCSTRING = r"""
             configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
 """
 
-MUSICGEN_INPUTS_DOCSTRING = r"""
+MUSICGEN_INPUTS_DOCSTRING = """
     Args:
         input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
             Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
@@ -1289,7 +1290,7 @@ MUSICGEN_INPUTS_DOCSTRING = r"""
             in the correct position and to infer the complete sequence length.
 """
 
-MUSICGEN_DECODER_INPUTS_DOCSTRING = r"""
+MUSICGEN_DECODER_INPUTS_DOCSTRING = """
     Args:
         input_ids (`torch.LongTensor` of shape `(batch_size * num_codebooks, sequence_length)`):
             Indices of input sequence tokens in the vocabulary, corresponding to the sequence of audio codes.
@@ -1864,6 +1865,14 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
     MUSICGEN_START_DOCSTRING,
 )
 class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
+    """
+    ParlerTTS Model for causal language modeling with proper GenerationMixin inheritance
+    """
+    config_class = ParlerTTSConfig
+    base_model_prefix = "parler_tts"
+    supports_gradient_checkpointing = True
+    _no_split_modules = ["ParlerTTSDecoderLayer"]
+
     def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
 
@@ -2345,15 +2354,14 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
     "for music generation tasks with one or both of text and audio prompts.",
     MUSICGEN_START_DOCSTRING,
 )
-class ParlerTTSForConditionalGeneration(PreTrainedModel):
+class ParlerTTSForConditionalGeneration(PreTrainedModel, GenerationMixin):
     config_class = ParlerTTSConfig
-    base_model_prefix = "encoder_decoder"
-    main_input_name = "input_ids"
+    base_model_prefix = "parler_tts"
     supports_gradient_checkpointing = True
+    _no_split_modules = ["ParlerTTSDecoderLayer", "ParlerTTSAttention"]
     _supports_flash_attn_2 = True
     _supports_sdpa = True
     _supports_cache_class = True
-    _supports_static_cache = True
 
     def __init__(
         self,

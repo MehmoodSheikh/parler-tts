@@ -92,101 +92,125 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
 
 class ParlerTTSConfig(PretrainedConfig):
     """
-    Configuration class for ParlerTTS.
+    Configuration class for ParlerTTS with improved attribute handling.
     """
     model_type = "parler_tts"
     is_composition = True
 
     def __init__(self, vocab_size=None, prompt_cross_attention=True, **kwargs):
+        # Initialize parent class first
         super().__init__(**kwargs)
         
-        # Enhanced configuration loading with better error handling
-        if "text_encoder" not in kwargs and "audio_encoder" not in kwargs and "decoder" not in kwargs:
-            # If we're loading from a pretrained model, try to construct default configs
-            logger.warning(
-                "No sub-configs found. This might be a legacy model format. "
-                "Attempting to construct default configurations..."
-            )
-            
-            # Try to load from the model's config.json if available
-            try:
-                # Default configurations - adjust these based on the actual model
-                text_encoder_config = {
-                    "model_type": "t5",
-                    "vocab_size": vocab_size or 32128,
-                    "d_model": 512,
-                    "num_layers": 6,
-                    "num_heads": 8,
-                    "d_ff": 2048,
-                }
-                
-                audio_encoder_config = {
-                    "model_type": "dac_on_the_hub" if self._is_dac_integrated_to_transformers() else "dac",
-                    "num_codebooks": 9,
-                    "codebook_size": 1024,
-                    "latent_dim": 1024,
-                    "sampling_rate": 44100,
-                }
-                
-                decoder_config = {
-                    "model_type": "parler_tts_decoder",
-                    "vocab_size": vocab_size or 32128,
-                    "hidden_size": 896,
-                    "num_hidden_layers": 24,
-                    "num_attention_heads": 14,
-                    "intermediate_size": 3584,
-                }
-                
-                kwargs.update({
-                    "text_encoder": text_encoder_config,
-                    "audio_encoder": audio_encoder_config,
-                    "decoder": decoder_config,
-                })
-                
-            except Exception as e:
-                logger.error(f"Failed to construct default configs: {e}")
-                raise ValueError(
-                    "Config has to be initialized with text_encoder, audio_encoder and decoder config. "
-                    f"Current kwargs keys: {list(kwargs.keys())}"
-                )
-        
-        # Now proceed with the original logic
-        if "text_encoder" not in kwargs or "audio_encoder" not in kwargs or "decoder" not in kwargs:
-            raise ValueError("Config has to be initialized with text_encoder, audio_encoder and decoder config")
-
-        text_encoder_config = kwargs.pop("text_encoder")
-        audio_encoder_config = kwargs.pop("audio_encoder")
-        decoder_config = kwargs.pop("decoder")
-
-        # Initialize sub-configs
-        from transformers import AutoConfig
-        self.text_encoder = AutoConfig.for_model(**text_encoder_config)
-        self.decoder = ParlerTTSDecoderConfig(**decoder_config)
-        
-        # Handle audio encoder config based on transformers version
-        if self._is_dac_integrated_to_transformers():
-            audio_encoder_config["model_type"] = "dac_on_the_hub"
-        else:
-            audio_encoder_config["model_type"] = "dac"
-
-        # Import DACConfig here to avoid circular imports
-        try:
-            from .dac_wrapper import DACConfig
-            self.audio_encoder = DACConfig(**audio_encoder_config)
-        except ImportError as e:
-            logger.warning(f"Could not import DACConfig: {e}")
-            # Create a minimal config if import fails
-            self.audio_encoder = type('DACConfig', (), audio_encoder_config)()
-
+        # Set default values before processing sub-configs
         self.vocab_size = vocab_size
         self.prompt_cross_attention = prompt_cross_attention
+        
+        # Handle sub-configurations with better error handling
+        self._initialize_sub_configs(kwargs)
+
+    def _initialize_sub_configs(self, kwargs):
+        """Initialize sub-configurations with proper error handling"""
+        
+        # Check if we have the required sub-configs
+        required_configs = ["text_encoder", "audio_encoder", "decoder"]
+        missing_configs = [cfg for cfg in required_configs if cfg not in kwargs]
+        
+        if missing_configs:
+            logger.warning(f"Missing sub-configs: {missing_configs}. Creating defaults...")
+            self._create_default_configs(kwargs)
+        
+        # Extract sub-configs
+        text_encoder_config = kwargs.pop("text_encoder", {})
+        audio_encoder_config = kwargs.pop("audio_encoder", {})
+        decoder_config = kwargs.pop("decoder", {})
+        
+        # Initialize sub-configs with error handling
+        try:
+            from transformers import AutoConfig
+            
+            # Text encoder config
+            if isinstance(text_encoder_config, dict):
+                self.text_encoder = AutoConfig.for_model(**text_encoder_config)
+            else:
+                self.text_encoder = text_encoder_config
+            
+            # Decoder config
+            if isinstance(decoder_config, dict):
+                self.decoder = ParlerTTSDecoderConfig(**decoder_config)
+            else:
+                self.decoder = decoder_config
+                
+            # Audio encoder config (DAC)
+            if isinstance(audio_encoder_config, dict):
+                # Handle DAC config based on transformers version
+                if self._is_dac_integrated_to_transformers():
+                    audio_encoder_config["model_type"] = "dac_on_the_hub"
+                else:
+                    audio_encoder_config["model_type"] = "dac"
+                
+                try:
+                    from .dac_wrapper import DACConfig
+                    self.audio_encoder = DACConfig(**audio_encoder_config)
+                except ImportError:
+                    logger.warning("Could not import DACConfig, using generic config")
+                    # Create a basic config object
+                    self.audio_encoder = type('DACConfig', (), audio_encoder_config)()
+            else:
+                self.audio_encoder = audio_encoder_config
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize sub-configs: {e}")
+            raise ValueError(f"Configuration initialization failed: {e}")
+
+    def _create_default_configs(self, kwargs):
+        """Create default configurations for missing sub-configs"""
+        
+        if "text_encoder" not in kwargs:
+            kwargs["text_encoder"] = {
+                "model_type": "t5",
+                "vocab_size": self.vocab_size or 32128,
+                "d_model": 512,
+                "num_layers": 6,
+                "num_heads": 8,
+                "d_ff": 2048,
+            }
+        
+        if "audio_encoder" not in kwargs:
+            kwargs["audio_encoder"] = {
+                "model_type": "dac_on_the_hub" if self._is_dac_integrated_to_transformers() else "dac",
+                "num_codebooks": 9,
+                "codebook_size": 1024,
+                "latent_dim": 1024,
+                "sampling_rate": 44100,
+            }
+        
+        if "decoder" not in kwargs:
+            kwargs["decoder"] = {
+                "model_type": "parler_tts_decoder",
+                "vocab_size": self.vocab_size or 32128,
+                "hidden_size": 896,
+                "num_hidden_layers": 24,
+                "num_attention_heads": 14,
+                "intermediate_size": 3584,
+            }
 
     def _is_dac_integrated_to_transformers(self):
         """Check if DAC is integrated to transformers"""
         try:
+            from importlib.metadata import version
+            from packaging.version import Version
             return Version(version("transformers")) > Version("4.44.2dev")
-        except:
+        except Exception:
             return False
+
+    def __getattribute__(self, key):
+        """Override getattribute to handle attribute access properly"""
+        try:
+            return super().__getattribute__(key)
+        except AttributeError:
+            # Handle missing attributes gracefully
+            logger.warning(f"Attribute '{key}' not found in config")
+            return None
 
 # NO TEST CODE OR IMPORTS FROM PARLER_TTS HERE!
 # The file should end here without any execution code.

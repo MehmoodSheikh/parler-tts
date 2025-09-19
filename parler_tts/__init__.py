@@ -24,36 +24,31 @@ TRANSFORMERS_VERSION = Version(version("transformers"))
 IS_TRANSFORMERS_4_44_PLUS = TRANSFORMERS_VERSION > Version("4.44.0")
 
 def register_parler_tts_models():
-    """Register ParlerTTS models with transformers AutoModel classes"""
+    """Register ParlerTTS models with transformers AutoModel system"""
     try:
-        # Register ParlerTTS configurations
-        if not hasattr(AutoConfig, "_name_to_config") or "parler_tts" not in AutoConfig._name_to_config:
-            AutoConfig.register("parler_tts", ParlerTTSConfig)
-            logger.info("Registered ParlerTTSConfig")
+        from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForSeq2SeqLM
         
-        if not hasattr(AutoConfig, "_name_to_config") or "parler_tts_decoder" not in AutoConfig._name_to_config:
-            AutoConfig.register("parler_tts_decoder", ParlerTTSDecoderConfig)
-            logger.info("Registered ParlerTTSDecoderConfig")
+        # Register configurations
+        AutoConfig.register("parler_tts", ParlerTTSConfig)
+        AutoConfig.register("parler_tts_decoder", ParlerTTSDecoderConfig)
         
-        # Register ParlerTTS models
-        AutoModel.register(ParlerTTSConfig, ParlerTTSForConditionalGeneration, exist_ok=True)
-        AutoModelForSeq2SeqLM.register(ParlerTTSConfig, ParlerTTSForConditionalGeneration, exist_ok=True)
-        AutoModelForCausalLM.register(ParlerTTSDecoderConfig, ParlerTTSForCausalLM, exist_ok=True)
+        # Register models with both AutoModel classes
+        AutoModel.register(ParlerTTSConfig, ParlerTTSForConditionalGeneration)
+        AutoModelForSeq2SeqLM.register(ParlerTTSConfig, ParlerTTSForConditionalGeneration)
+        AutoModelForCausalLM.register(ParlerTTSConfig, ParlerTTSForCausalLM)
         
-        # Handle DAC model registration based on transformers version
-        dac_config_name = "dac_on_the_hub" if IS_TRANSFORMERS_4_44_PLUS else "dac"
+        # Register DAC if available
+        if not is_dac_integrated_to_transformers:
+            AutoConfig.register("dac", DACConfig)
+        else:
+            AutoConfig.register("dac_on_the_hub", DACConfig)
+        AutoModel.register(DACConfig, DACModel)
         
-        if not hasattr(AutoConfig, "_name_to_config") or dac_config_name not in AutoConfig._name_to_config:
-            AutoConfig.register(dac_config_name, DACConfig)
-            logger.info(f"Registered DACConfig as {dac_config_name}")
-        
-        AutoModel.register(DACConfig, DACModel, exist_ok=True)
-        
-        logger.info("All ParlerTTS models registered successfully")
+        logger.info("✅ All ParlerTTS models registered successfully")
         
     except Exception as e:
-        logger.warning(f"Failed to register some ParlerTTS models: {e}")
-        # Continue anyway - the models might still work
+        logger.warning(f"Model registration incomplete: {e}")
+        # Don't fail completely, just warn
 
 # Automatically register models on import
 register_parler_tts_models()
