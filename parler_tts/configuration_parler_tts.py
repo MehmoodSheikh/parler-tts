@@ -249,14 +249,40 @@ class ParlerTTSConfig(PretrainedConfig):
         
         return output
 
+    def __deepcopy__(self, memo):
+        """Custom deep copy to handle non-serializable objects"""
+        try:
+            # Create a new instance
+            new_config = self.__class__.__new__(self.__class__)
+            memo[id(self)] = new_config
+            
+            # Copy attributes safely
+            for key, value in self.__dict__.items():
+                try:
+                    new_config.__dict__[key] = copy.deepcopy(value, memo)
+                except Exception:
+                    # If deepcopy fails for this attribute, just reference it
+                    new_config.__dict__[key] = value
+                    
+            return new_config
+            
+        except Exception:
+            # Ultimate fallback - return self (no copy)
+            logger.warning("Deep copy failed, returning original config")
+            return self
+
+    def __getstate__(self):
+        """Control what gets pickled (used by deepcopy)"""
+        return self.__dict__.copy()
+
+    def __setstate__(self, state):
+        """Control how object is unpickled (used by deepcopy)"""
+        self.__dict__.update(state)
+
     def __repr__(self):
         """Override __repr__ to prevent to_dict issues during logging"""
         return f"{self.__class__.__name__} (configuration object)"
 
-# NO TEST CODE OR IMPORTS FROM PARLER_TTS HERE!
-# The file should end here without any execution code.
-
-# Add these patches at the end of the file:
 
 # Monkey patch to fix quantization issues
 import transformers.quantizers.auto
