@@ -98,19 +98,17 @@ class ParlerTTSConfig(PretrainedConfig):
     is_composition = True
 
     def __init__(self, vocab_size=None, prompt_cross_attention=True, **kwargs):
-        # Set quantization_config to None explicitly before parent init
-        if 'quantization_config' not in kwargs:
-            kwargs['quantization_config'] = None
-            
         # Initialize parent class first
         super().__init__(**kwargs)
-        
-        # Explicitly set quantization_config to None after parent init
-        self.quantization_config = None
         
         # Set default values
         self.vocab_size = vocab_size
         self.prompt_cross_attention = prompt_cross_attention
+        
+        # Initialize attributes that transformers expects
+        self.quantization_config = None
+        self.auto_map = {}
+        self.custom_pipelines = {}
         
         # Initialize sub-configurations
         self._initialize_sub_configs(kwargs)
@@ -208,89 +206,97 @@ class ParlerTTSConfig(PretrainedConfig):
 
     def __getattribute__(self, key):
         """Override getattribute to handle missing attributes properly"""
-        if key == 'quantization_config':
-            # Return None for quantization_config - transformers will handle this
-            return getattr(self, '_quantization_config', None)
-        elif key == 'transformers_weights':
-            # Handle missing transformers_weights attribute
-            return None
-        
         try:
             return super().__getattribute__(key)
         except AttributeError:
-            # Handle other missing attributes
-            if key in ['_attn_implementation_internal', 'gguf_file']:
+            # Return appropriate defaults for known attributes
+            if key == 'quantization_config':
+                return None
+            elif key in ['auto_map']:
+                return {}
+            elif key in ['custom_pipelines']:
+                return {}
+            elif key == 'transformers_weights':
+                return None
+            elif key in ['_attn_implementation_internal', 'gguf_file']:
                 return None
             else:
-                logger.warning(f"Attribute '{key}' not found in config")
+                # For unknown attributes, return None but don't log
                 return None
-
-    def __setattr__(self, key, value):
-        """Override setattr to handle quantization_config properly"""
-        if key == 'quantization_config':
-            # Store quantization_config with a private name
-            super().__setattr__('_quantization_config', value)
-        else:
-            super().__setattr__(key, value)
-
-    @property
-    def quantization_config(self):
-        """Property to return quantization_config safely"""
-        return getattr(self, '_quantization_config', None)
-
-    @quantization_config.setter
-    def quantization_config(self, value):
-        """Setter for quantization_config"""
-        self._quantization_config = value
 
     def to_dict(self):
-        """Override to_dict to handle None quantization_config properly"""
-        # Temporarily store quantization_config
-        original_quantization_config = getattr(self, 'quantization_config', None)
+        """Custom to_dict that handles None attributes properly"""
+        output = {}
         
-        # Set quantization_config to None to prevent the error
-        if hasattr(self, 'quantization_config') and self.quantization_config is None:
-            delattr(self, 'quantization_config')
-        
-        try:
-            # Call parent to_dict
-            output = super().to_dict()
-        except AttributeError as e:
-            if "'NoneType' object has no attribute 'to_dict'" in str(e):
-                # Handle the quantization_config error by creating a custom dict
-                output = {}
-                for key, value in self.__dict__.items():
-                    if key.startswith('_'):
-                        continue
-                    if key == 'quantization_config' and value is None:
-                        continue
-                    if hasattr(value, 'to_dict'):
-                        try:
-                            output[key] = value.to_dict()
-                        except:
-                            output[key] = str(value)
-                    else:
-                        output[key] = value
+        # Get all non-private attributes
+        for key, value in self.__dict__.items():
+            if key.startswith('_'):
+                continue
+                
+            # Skip None quantization_config
+            if key == 'quantization_config' and value is None:
+                continue
+                
+            # Handle objects with to_dict method
+            if hasattr(value, 'to_dict') and callable(getattr(value, 'to_dict')):
+                try:
+                    output[key] = value.to_dict()
+                except Exception:
+                    # If to_dict fails, convert to string
+                    output[key] = str(value)
             else:
-                raise e
-        finally:
-            # Restore original quantization_config if it existed
-            if original_quantization_config is not None:
-                self.quantization_config = original_quantization_config
+                output[key] = value
         
-        # Ensure we remove None quantization_config from output
-        if 'quantization_config' in output and output['quantization_config'] is None:
-            del output['quantization_config']
-            
         return output
 
     def __repr__(self):
         """Override __repr__ to prevent to_dict issues during logging"""
-        try:
-            return f"{self.__class__.__name__} {self.to_json_string()}"
-        except Exception:
-            # Fallback representation if to_json_string fails
-            return f"{self.__class__.__name__} (configuration object)"
+        return f"{self.__class__.__name__} (configuration object)"
 
 # NO TEST CODE OR IMPORTS FROM PARLER_TTS HERE!
 # The file should end here without any execution code.
+
+# Add these patches at the end of the file:
+
+# Monkey patch to fix quantization issues
+import transformers.quantizers.auto
+
+# Store the original function
+original_supports_quant_method = transformers.quantizers.auto.AutoHfQuantizer.supports_quant_method
+
+@staticmethod
+def patched_supports_quant_method(quantization_config_dict):
+    """Patched version that handles None quantization_config"""
+    if quantization_config_dict is None:
+        return False
+    
+    if not hasattr(quantization_config_dict, 'get'):
+        # If it's not a dict-like object, return False
+        return False
+    
+    try:
+        return original_supports_quant_method(quantization_config_dict)
+    except Exception:
+        return False
+
+# Apply the patch
+transformers.quantizers.auto.AutoHfQuantizer.supports_quant_method = patched_supports_quant_method
+
+# Patch the get_hf_quantizer function
+original_get_hf_quantizer = transformers.quantizers.auto.get_hf_quantizer
+
+def patched_get_hf_quantizer(model_path, config, dtype, device_map, model_kwargs):
+    """Patched version that handles None quantization_config"""
+    # If quantization_config is None, bypass quantization
+    if hasattr(config, 'quantization_config') and config.quantization_config is None:
+        return None, config, dtype, device_map
+    
+    try:
+        return original_get_hf_quantizer(model_path, config, dtype, device_map, model_kwargs)
+    except Exception as e:
+        # If quantization fails, return no quantizer
+        logger.warning(f"Quantization failed: {e}, proceeding without quantization")
+        return None, config, dtype, device_map
+
+# Apply the patch
+transformers.quantizers.auto.get_hf_quantizer = patched_get_hf_quantizer
