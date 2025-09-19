@@ -2355,6 +2355,9 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
     MUSICGEN_START_DOCSTRING,
 )
 class ParlerTTSForConditionalGeneration(PreTrainedModel, GenerationMixin):
+    """
+    ParlerTTS Model for conditional generation with proper GenerationMixin inheritance
+    """
     config_class = ParlerTTSConfig
     base_model_prefix = "parler_tts"
     supports_gradient_checkpointing = True

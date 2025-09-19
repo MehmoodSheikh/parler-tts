@@ -92,7 +92,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
 
 class ParlerTTSConfig(PretrainedConfig):
     """
-    Configuration class for ParlerTTS with improved attribute handling.
+    Configuration class for ParlerTTS with proper attribute handling.
     """
     model_type = "parler_tts"
     is_composition = True
@@ -101,11 +101,11 @@ class ParlerTTSConfig(PretrainedConfig):
         # Initialize parent class first
         super().__init__(**kwargs)
         
-        # Set default values before processing sub-configs
+        # Set default values
         self.vocab_size = vocab_size
         self.prompt_cross_attention = prompt_cross_attention
         
-        # Handle sub-configurations with better error handling
+        # Initialize sub-configurations
         self._initialize_sub_configs(kwargs)
 
     def _initialize_sub_configs(self, kwargs):
@@ -124,7 +124,7 @@ class ParlerTTSConfig(PretrainedConfig):
         audio_encoder_config = kwargs.pop("audio_encoder", {})
         decoder_config = kwargs.pop("decoder", {})
         
-        # Initialize sub-configs with error handling
+        # Initialize sub-configs
         try:
             from transformers import AutoConfig
             
@@ -142,7 +142,6 @@ class ParlerTTSConfig(PretrainedConfig):
                 
             # Audio encoder config (DAC)
             if isinstance(audio_encoder_config, dict):
-                # Handle DAC config based on transformers version
                 if self._is_dac_integrated_to_transformers():
                     audio_encoder_config["model_type"] = "dac_on_the_hub"
                 else:
@@ -153,7 +152,6 @@ class ParlerTTSConfig(PretrainedConfig):
                     self.audio_encoder = DACConfig(**audio_encoder_config)
                 except ImportError:
                     logger.warning("Could not import DACConfig, using generic config")
-                    # Create a basic config object
                     self.audio_encoder = type('DACConfig', (), audio_encoder_config)()
             else:
                 self.audio_encoder = audio_encoder_config
@@ -197,20 +195,34 @@ class ParlerTTSConfig(PretrainedConfig):
     def _is_dac_integrated_to_transformers(self):
         """Check if DAC is integrated to transformers"""
         try:
-            from importlib.metadata import version
-            from packaging.version import Version
             return Version(version("transformers")) > Version("4.44.2dev")
         except Exception:
             return False
 
     def __getattribute__(self, key):
-        """Override getattribute to handle attribute access properly"""
+        """Override getattribute to handle missing attributes properly"""
         try:
             return super().__getattribute__(key)
         except AttributeError:
-            # Handle missing attributes gracefully
-            logger.warning(f"Attribute '{key}' not found in config")
-            return None
+            # Handle specific attributes that transformers expects
+            if key in ['_attn_implementation_internal', 'gguf_file']:
+                return None
+            elif key == 'quantization_config':
+                # Return None but don't log warning for this common attribute
+                return None
+            else:
+                logger.warning(f"Attribute '{key}' not found in config")
+                return None
+
+    def to_dict(self):
+        """Override to_dict to handle None quantization_config properly"""
+        output = super().to_dict()
+        
+        # Remove None quantization_config to prevent the to_dict() error
+        if 'quantization_config' in output and output['quantization_config'] is None:
+            del output['quantization_config']
+            
+        return output
 
 # NO TEST CODE OR IMPORTS FROM PARLER_TTS HERE!
 # The file should end here without any execution code.
