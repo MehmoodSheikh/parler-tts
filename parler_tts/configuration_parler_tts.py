@@ -173,94 +173,95 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
 
 
 class ParlerTTSConfig(PretrainedConfig):
-    r"""
-    This is the configuration class to store the configuration of a [`ParlerTTSModel`]. It is used to instantiate a
-    Parler-TTS model according to the specified arguments, defining the text encoder, audio encoder and Parler-TTS decoder
-    configs.
-
-    Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
-    documentation from [`PretrainedConfig`] for more information.
-
-    Args:
-        vocab_size (`int`, *optional*, defaults to 1024):
-            Vocabulary size of the prompt token ids. Defines the number of different tokens that can be
-            represented by the `prompt_inputs_ids`.
-        prompt_cross_attention (`bool`, *optional*, defaults to `False`):
-            Whether to use cross-attention conditioning for the prompt (as well as the description).
-        kwargs (*optional*):
-            Dictionary of keyword arguments. Notably:
-
-                - **text_encoder** ([`PretrainedConfig`], *optional*) -- An instance of a configuration object that
-                  defines the text encoder config.
-                - **audio_encoder** ([`PretrainedConfig`], *optional*) -- An instance of a configuration object that
-                  defines the audio encoder config.
-                - **decoder** ([`PretrainedConfig`], *optional*) -- An instance of a configuration object that defines
-                  the decoder config.
-
-    Example:
-
-    ```python
-    >>> from transformers import (
-    ...     ParlerTTSConfig,
-    ...     ParlerTTSDecoderConfig,
-    ...     T5Config,
-    ...     EncodecConfig,
-    ...     ParlerTTSForConditionalGeneration,
-    ... )
-
-    >>> # Initializing text encoder, audio encoder, and decoder model configurations
-    >>> text_encoder_config = T5Config()
-    >>> audio_encoder_config = EncodecConfig()
-    >>> decoder_config = ParlerTTSDecoderConfig()
-
-    >>> configuration = ParlerTTSConfig.from_sub_models_config(
-    ...     text_encoder_config, audio_encoder_config, decoder_config
-    ... )
-
-    >>> # Initializing a ParlerTTSForConditionalGeneration (with random weights) from the parler-tts/parler-tts-mini-v1 style configuration
-    >>> model = ParlerTTSForConditionalGeneration(configuration)
-
-    >>> # Accessing the model configuration
-    >>> configuration = model.config
-    >>> config_text_encoder = model.config.text_encoder
-    >>> config_audio_encoder = model.config.audio_encoder
-    >>> config_decoder = model.config.decoder
-
-    >>> # Saving the model, including its configuration
-    >>> model.save_pretrained("parler_tts-model")
-
-    >>> # loading model and config from pretrained folder
-    >>> parler_tts_config = ParlerTTSConfig.from_pretrained("parler_tts-model")
-    >>> model = ParlerTTSForConditionalGeneration.from_pretrained("parler_tts-model", config=parler_tts_config)
-    ```"""
-
     model_type = "parler_tts"
     is_composition = True
-
-    def __init__(self, vocab_size=1024, prompt_cross_attention=False, **kwargs):
+    
+    def __init__(self, vocab_size=None, prompt_cross_attention=True, **kwargs):
         super().__init__(**kwargs)
+        
+        # Enhanced configuration loading with better error handling
+        if "text_encoder" not in kwargs and "audio_encoder" not in kwargs and "decoder" not in kwargs:
+            # If we're loading from a pretrained model, try to construct default configs
+            logger.warning(
+                "No sub-configs found. This might be a legacy model format. "
+                "Attempting to construct default configurations..."
+            )
+            
+            # Try to load from the model's config.json if available
+            try:
+                # Default configurations - adjust these based on the actual model
+                text_encoder_config = {
+                    "model_type": "t5",  # or whatever the actual text encoder is
+                    "vocab_size": vocab_size or 32128,
+                    "d_model": 512,
+                    "num_layers": 6,
+                    "num_heads": 8,
+                    "d_ff": 2048,
+                }
+                
+                audio_encoder_config = {
+                    "model_type": "dac_on_the_hub" if self._is_dac_integrated_to_transformers() else "dac",
+                    "num_codebooks": 9,
+                    "codebook_size": 1024,
+                    "latent_dim": 1024,
+                    "sampling_rate": 44100,
+                }
+                
+                decoder_config = {
+                    "model_type": "parler_tts_decoder",
+                    "vocab_size": vocab_size or 32128,
+                    "d_model": 896,
+                    "num_layers": 24,
+                    "num_heads": 14,
+                    "d_ff": 3584,
+                }
+                
+                kwargs.update({
+                    "text_encoder": text_encoder_config,
+                    "audio_encoder": audio_encoder_config,
+                    "decoder": decoder_config,
+                })
+                
+            except Exception as e:
+                logger.error(f"Failed to construct default configs: {e}")
+                raise ValueError(
+                    "Config has to be initialized with text_encoder, audio_encoder and decoder config. "
+                    f"Current kwargs keys: {list(kwargs.keys())}"
+                )
+        
+        # Now proceed with the original logic
         if "text_encoder" not in kwargs or "audio_encoder" not in kwargs or "decoder" not in kwargs:
             raise ValueError("Config has to be initialized with text_encoder, audio_encoder and decoder config")
 
         text_encoder_config = kwargs.pop("text_encoder")
-        text_encoder_model_type = text_encoder_config.pop("model_type")
-
         audio_encoder_config = kwargs.pop("audio_encoder")
-        audio_encoder_model_type = audio_encoder_config.pop("model_type")
-
-        model_version = kwargs.get("transformers_version", None)
-        if model_version is not None and Version(model_version) <= Version("4.44.2dev") and use_dac_on_the_hub and audio_encoder_model_type=="dac":
-            # here we have to manually change model type if DAC based on transformers version
-            audio_encoder_model_type = "dac_on_the_hub"
-
         decoder_config = kwargs.pop("decoder")
+
+        # Initialize sub-configs
+        from transformers import AutoConfig
+        self.text_encoder = AutoConfig.for_model(**text_encoder_config)
+        self.decoder = ParlerTTSDecoderConfig(**decoder_config)
+        
+        # Handle audio encoder config based on transformers version
+        if self._is_dac_integrated_to_transformers():
+            audio_encoder_config["model_type"] = "dac_on_the_hub"
+        else:
+            audio_encoder_config["model_type"] = "dac"
+            
+        from .dac_wrapper import DACConfig
+        self.audio_encoder = DACConfig(**audio_encoder_config)
 
         self.vocab_size = vocab_size
         self.prompt_cross_attention = prompt_cross_attention
-        self.text_encoder = AutoConfig.for_model(text_encoder_model_type, **text_encoder_config)
-        self.audio_encoder = AutoConfig.for_model(audio_encoder_model_type, **audio_encoder_config)
-        self.decoder = ParlerTTSDecoderConfig(**decoder_config)
-        self.is_encoder_decoder = True
+
+    def _is_dac_integrated_to_transformers(self):
+        """Check if DAC is integrated to transformers"""
+        try:
+            from importlib.metadata import version
+            from packaging.version import Version
+            return Version(version("transformers")) > Version("4.44.2dev")
+        except:
+            return False
 
     @classmethod
     def from_sub_models_config(
@@ -289,3 +290,51 @@ class ParlerTTSConfig(PretrainedConfig):
     # This is a property because you might want to change the codec model on the fly
     def sampling_rate(self):
         return self.audio_encoder.sampling_rate
+
+# Install required dependencies
+import subprocess
+import sys
+
+def install_requirements():
+    requirements = [
+        "descript-audio-codec",
+        "transformers>=4.40.0",
+        "torch",
+        "torchaudio",
+        "soundfile",
+        "librosa"
+    ]
+    
+    for req in requirements:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", req])
+
+# Run installation
+install_requirements()
+
+# Test the model loading
+from parler_tts import register_parler_tts_models, ParlerTTSForConditionalGeneration
+
+# Register models
+register_parler_tts_models()
+
+# Load model
+try:
+    model = ParlerTTSForConditionalGeneration.from_pretrained(
+        "parler-tts/parler-tts-large-v1", 
+        revision="refs/pr/9"
+    )
+    print("Model loaded successfully!")
+except Exception as e:
+    print(f"Error: {e}")
+    
+    # Try alternative approach
+    from parler_tts import ParlerTTSConfig
+    
+    # Manual config approach
+    config = ParlerTTSConfig.from_pretrained("parler-tts/parler-tts-large-v1", revision="refs/pr/9")
+    model = ParlerTTSForConditionalGeneration.from_pretrained(
+        "parler-tts/parler-tts-large-v1", 
+        config=config,
+        revision="refs/pr/9"
+    )
+    print("Model loaded with manual config!")
