@@ -216,13 +216,52 @@ class ParlerTTSConfig(PretrainedConfig):
 
     def to_dict(self):
         """Override to_dict to handle None quantization_config properly"""
-        output = super().to_dict()
+        # Temporarily store quantization_config
+        original_quantization_config = getattr(self, 'quantization_config', None)
         
-        # Remove None quantization_config to prevent the to_dict() error
+        # Set quantization_config to None to prevent the error
+        if hasattr(self, 'quantization_config') and self.quantization_config is None:
+            delattr(self, 'quantization_config')
+        
+        try:
+            # Call parent to_dict
+            output = super().to_dict()
+        except AttributeError as e:
+            if "'NoneType' object has no attribute 'to_dict'" in str(e):
+                # Handle the quantization_config error by creating a custom dict
+                output = {}
+                for key, value in self.__dict__.items():
+                    if key.startswith('_'):
+                        continue
+                    if key == 'quantization_config' and value is None:
+                        continue
+                    if hasattr(value, 'to_dict'):
+                        try:
+                            output[key] = value.to_dict()
+                        except:
+                            output[key] = str(value)
+                    else:
+                        output[key] = value
+            else:
+                raise e
+        finally:
+            # Restore original quantization_config if it existed
+            if original_quantization_config is not None:
+                self.quantization_config = original_quantization_config
+        
+        # Ensure we remove None quantization_config from output
         if 'quantization_config' in output and output['quantization_config'] is None:
             del output['quantization_config']
             
         return output
+
+    def __repr__(self):
+        """Override __repr__ to prevent to_dict issues during logging"""
+        try:
+            return f"{self.__class__.__name__} {self.to_json_string()}"
+        except Exception:
+            # Fallback representation if to_json_string fails
+            return f"{self.__class__.__name__} (configuration object)"
 
 # NO TEST CODE OR IMPORTS FROM PARLER_TTS HERE!
 # The file should end here without any execution code.
