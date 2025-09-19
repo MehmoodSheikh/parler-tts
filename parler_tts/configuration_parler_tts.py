@@ -282,21 +282,46 @@ def patched_supports_quant_method(quantization_config_dict):
 # Apply the patch
 transformers.quantizers.auto.AutoHfQuantizer.supports_quant_method = patched_supports_quant_method
 
-# Patch the get_hf_quantizer function
+# Patch the get_hf_quantizer function with correct signature
 original_get_hf_quantizer = transformers.quantizers.auto.get_hf_quantizer
 
-def patched_get_hf_quantizer(model_path, config, dtype, device_map, model_kwargs):
-    """Patched version that handles None quantization_config"""
+def patched_get_hf_quantizer(*args, **kwargs):
+    """Patched version that handles None quantization_config with flexible signature"""
+    
+    # Handle different argument patterns
+    if len(args) >= 2:
+        config = args[1]  # config is typically the second argument
+    elif 'config' in kwargs:
+        config = kwargs['config']
+    else:
+        # If we can't find config, just call original
+        try:
+            return original_get_hf_quantizer(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"Quantization failed: {e}, proceeding without quantization")
+            # Return safe defaults based on common transformers patterns
+            if len(args) >= 4:
+                return None, args[1], args[2], args[3]
+            else:
+                return None, None, None, None
+    
     # If quantization_config is None, bypass quantization
     if hasattr(config, 'quantization_config') and config.quantization_config is None:
-        return None, config, dtype, device_map
+        # Return no quantizer, but preserve other arguments
+        if len(args) >= 4:
+            return None, args[1], args[2], args[3]  # None, config, dtype, device_map
+        else:
+            return None, config, kwargs.get('dtype'), kwargs.get('device_map')
     
     try:
-        return original_get_hf_quantizer(model_path, config, dtype, device_map, model_kwargs)
+        return original_get_hf_quantizer(*args, **kwargs)
     except Exception as e:
-        # If quantization fails, return no quantizer
         logger.warning(f"Quantization failed: {e}, proceeding without quantization")
-        return None, config, dtype, device_map
+        # Return safe defaults
+        if len(args) >= 4:
+            return None, args[1], args[2], args[3]
+        else:
+            return None, config, kwargs.get('dtype'), kwargs.get('device_map')
 
 # Apply the patch
 transformers.quantizers.auto.get_hf_quantizer = patched_get_hf_quantizer
