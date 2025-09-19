@@ -98,8 +98,15 @@ class ParlerTTSConfig(PretrainedConfig):
     is_composition = True
 
     def __init__(self, vocab_size=None, prompt_cross_attention=True, **kwargs):
+        # Set quantization_config to None explicitly before parent init
+        if 'quantization_config' not in kwargs:
+            kwargs['quantization_config'] = None
+            
         # Initialize parent class first
         super().__init__(**kwargs)
+        
+        # Explicitly set quantization_config to None after parent init
+        self.quantization_config = None
         
         # Set default values
         self.vocab_size = vocab_size
@@ -201,18 +208,40 @@ class ParlerTTSConfig(PretrainedConfig):
 
     def __getattribute__(self, key):
         """Override getattribute to handle missing attributes properly"""
+        if key == 'quantization_config':
+            # Return None for quantization_config - transformers will handle this
+            return getattr(self, '_quantization_config', None)
+        elif key == 'transformers_weights':
+            # Handle missing transformers_weights attribute
+            return None
+        
         try:
             return super().__getattribute__(key)
         except AttributeError:
-            # Handle specific attributes that transformers expects
+            # Handle other missing attributes
             if key in ['_attn_implementation_internal', 'gguf_file']:
-                return None
-            elif key == 'quantization_config':
-                # Return None but don't log warning for this common attribute
                 return None
             else:
                 logger.warning(f"Attribute '{key}' not found in config")
                 return None
+
+    def __setattr__(self, key, value):
+        """Override setattr to handle quantization_config properly"""
+        if key == 'quantization_config':
+            # Store quantization_config with a private name
+            super().__setattr__('_quantization_config', value)
+        else:
+            super().__setattr__(key, value)
+
+    @property
+    def quantization_config(self):
+        """Property to return quantization_config safely"""
+        return getattr(self, '_quantization_config', None)
+
+    @quantization_config.setter
+    def quantization_config(self, value):
+        """Setter for quantization_config"""
+        self._quantization_config = value
 
     def to_dict(self):
         """Override to_dict to handle None quantization_config properly"""
